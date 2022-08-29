@@ -15,7 +15,11 @@
 
 #define ALLOW_REINSERTS
 #define MAXITEMS 32      // 32 max items per node
-#define MINFILL  20      // 20% min fill
+#define MINFILL  10      // 10% min fill
+
+static const ORDER_BRANCHES = true;
+static const ORDER_LEAVES = true;
+
 
 static void *(*_malloc)(size_t) = NULL;
 static void (*_free)(void *) = NULL;
@@ -271,10 +275,89 @@ static int rect_largest_axis(double *rect, int dims) {
     return axis;
 }
 
+static void move_rect_at_index_into(struct rtree *rtree, 
+                                    struct node *from, int index,
+                                    struct node *into)
+{
+    node_rect_data_copy(rtree, into, into->count, from, index);
+    into->count++;
+    node_rect_data_copy(rtree, from, index, from, from->count-1);
+    from->count--;
+}
+
+static void node_swap(struct rtree *rtree, struct node *node, int i, int j,
+                      void *tmp_item, double *tmp_rect) 
+{
+    // copy rect
+    double *a = rect_at(rtree, node, i);
+    double *b = rect_at(rtree, node, j);
+    memcpy(tmp_rect, a, 8 * rtree->dims * 2);
+    memcpy(a, b, 8 * rtree->dims * 2);
+    memcpy(b, tmp_rect, 8 * rtree->dims * 2);
+    if (node->leaf) {
+        // copy item
+        void *a = item_at(rtree, node, i);
+        void *b = item_at(rtree, node, j);
+        memcpy(tmp_item, a, rtree->elsize);
+        memcpy(a, b, rtree->elsize);
+        memcpy(b, tmp_item, rtree->elsize);
+    } else {
+        // copy child node
+        struct node **a = node_at(rtree, node, i);
+        struct node **b = node_at(rtree, node, j);
+        struct node *tmp = *a;
+        *a = *b;
+        *b = tmp;
+    }
+}
+
+static void node_qsort(struct rtree *rtree, struct node *node, 
+                       int s, int e, int axis, bool rev, bool max, 
+                       void *tmp_item, double *tmp_rect)
+{
+    int nrects = e - s;
+    if (nrects < 2) {
+        return;
+    }
+    int dims = rtree->dims;
+    int left = 0;
+    int right = nrects-1;
+    int pivot = nrects / 2; // rand and mod not worth it
+
+    node_swap(rtree, node, s+pivot, s+right, tmp_item, tmp_rect);
+    for (int i = 0; i < nrects; i++) {
+        double *a = rect_at(rtree, node, i);
+        double *b = rect_at(rtree, node, right);
+        bool less = rev && max  ? b[dims+axis] < a[dims+axis] :
+                    rev && !max ? b[axis] < a[axis] :
+                    !rev && max ? a[dims+axis] < b[dims+axis] :
+                                  a[axis] < b[axis];
+        if (less) {
+            node_swap(rtree, node, s+i, s+left, tmp_item, tmp_rect);
+            left++;
+        }
+    }
+    node_swap(rtree, node, s+left, s+right, tmp_item, tmp_rect);
+    node_qsort(rtree, node, s, s+left, axis, rev, max, tmp_item, tmp_rect);
+    node_qsort(rtree, node, s+left+1, e, axis, rev, max, tmp_item, tmp_rect);
+}
+
+static void node_sort_by_axis(struct rtree *rtree, struct node *node, 
+                              int axis, bool rev, bool max)
+{
+    void *tmp_item = NULL;
+    double *tmp_rect = alloca(8 * rtree->dims * 2);
+    if (node->leaf) {
+        tmp_item = alloca(rtree->elsize);
+    }
+    node_qsort(rtree, node, 0, node->count, axis, rev, max, tmp_item, tmp_rect);
+}
+
+static void node_sort(struct rtree *rtree, struct node *node) {
+    node_sort_by_axis(rtree, node, 0, false, false);
+}
+
 // node_split splits the node into two and returns the newly created node.
-// It uses the R!Tree (rbang-tree) algorithm, which is custom to this
-// R-tree implemention. 
-// For more information please visit https://github.com/tidwall/rbang
 static struct node *node_split(struct rtree *rtree, struct node *node, 
                                double *rect)
 {
@@ -282,43 +365,63 @@ static struct node *node_split(struct rtree *rtree, struct node *node,
     int axis = rect_largest_axis(rect, dims);
     double axis_min = rect[axis];
     double axis_max = rect[dims+axis];
-    struct node *right = node->leaf ? gimme_leaf(rtree) : gimme_branch(rtree);
+    struct node *left = node;
+    struct node *right = left->leaf ? gimme_leaf(rtree) : gimme_branch(rtree);
     right->count = 0;
-    struct node *equals = node->leaf ? gimme_leaf(rtree) : gimme_branch(rtree);
-    equals->count = 0;
-    for (int i = 0; i < node->count; i++) {
-        double *crect = rect_at(rtree, node, i); // child rect
+    for (int i = 0; i < left->count; i++) {
+        double *crect = rect_at(rtree, left, i); // child rect
         double min_dist = crect[axis] - axis_min;
         double max_dist = axis_max - crect[dims+axis];
         if (min_dist < max_dist) {
             // keep the child in the left node
-            continue;
-        }
-        if (min_dist > max_dist) {
+        } else {
             // move child to right
-            node_rect_data_copy(rtree, right, right->count, node, i);
-            right->count++;
-        } else {
-            // move child to equals bucket and resolve ties below
-            node_rect_data_copy(rtree, equals, equals->count, node, i);
-            equals->count++;
-        }
-        node_rect_data_copy(rtree, node, i, node, node->count-1);
-        node->count--;
-        i--;
-    }
-    // resolve ties
-    for (int i = 0; i < equals->count; i++) {
-        if (node->count < right->count) {
-            node_rect_data_copy(rtree, node, node->count, equals, i);
-            node->count++;
-        } else {
-            node_rect_data_copy(rtree, right, right->count, equals, i);
-            right->count++;
+            move_rect_at_index_into(rtree, left, i, right);
+            i--;
         }
     }
-    takeaway(rtree, equals);
+    
+    if (left->count < rtree->min_items) {
+        // reverse sort by min axis
+        node_sort_by_axis(rtree, right, axis, true, false);
+        while (left->count < rtree->min_items) {
+            move_rect_at_index_into(rtree, right, right->count-1, left);
+        }
+    } else if (right->count < rtree->min_items) {
+        // reverse sort by max axis
+        node_sort_by_axis(rtree, left, axis, true, true);
+        while (right->count < rtree->min_items) {
+            move_rect_at_index_into(rtree, left, left->count-1, right);
+    	}
+    }
+
     return right;
+}
+
+static double rect_area_d(double *rect, int dims) {
+    double area = rect[dims+0] - rect[0];
+    for (int i = 1; i < dims; i++) {
+        area *= rect[dims+i] - rect[i];
+    }
+    return area;
+}
+
+static double rect_area_2(double *rect, int dims) {
+    return (rect[dims+0] - rect[0]) *
+           (rect[dims+1] - rect[1]);
+}
+
+static double rect_area_3(double *rect, int dims) {
+    return (rect[dims+0] - rect[0]) *
+           (rect[dims+1] - rect[1]) *
+           (rect[dims+2] - rect[2]);
+}
+
+static double rect_area_4(double *rect, int dims) {
+    return (rect[dims+0] - rect[0]) *
+           (rect[dims+1] - rect[1]) *
+           (rect[dims+2] - rect[2]) *
+           (rect[dims+3] - rect[3]);
 }
 
 // rect_enlarged_area calculates the enlarged area rect when unioned with other
@@ -326,8 +429,8 @@ static struct node *node_split(struct rtree *rtree, struct node *node,
 static double rect_enlarged_area_d(double *rect, double *other, int dims, 
                                    double *area_out)
 {
+    double area = rect_area_d(rect, dims);
     double enlarged = MAX(other[dims+0], rect[dims+0]) - MIN(other[0], rect[0]);
-    double area = rect[dims+0] - rect[0];
     for (int i = 1; i < dims; i++) {
         enlarged *= MAX(other[dims+i], rect[dims+i]) - MIN(other[i], rect[i]);
         area *= rect[dims+i] - rect[i];
@@ -338,8 +441,7 @@ static double rect_enlarged_area_d(double *rect, double *other, int dims,
 static double rect_enlarged_area_2(double *rect, double *other, int dims, 
                                    double *area_out)
 {
-    double area = (rect[dims+0] - rect[0]) *
-                  (rect[dims+1] - rect[1]);
+    double area = rect_area_2(rect, dims);
     double enlarged = 
         (MAX(other[dims+0], rect[dims+0]) - MIN(other[0], rect[0])) *
         (MAX(other[dims+1], rect[dims+1]) - MIN(other[1], rect[1]));    
@@ -349,28 +451,23 @@ static double rect_enlarged_area_2(double *rect, double *other, int dims,
 static double rect_enlarged_area_3(double *rect, double *other, int dims, 
                                    double *area_out)
 {
+    double area = rect_area_3(rect, dims);
     double enlarged = 
         (MAX(other[dims+0], rect[dims+0]) - MIN(other[0], rect[0])) *
         (MAX(other[dims+1], rect[dims+1]) - MIN(other[1], rect[1])) *
         (MAX(other[dims+2], rect[dims+2]) - MIN(other[2], rect[2]));    
-    double area = (rect[dims+0] - rect[0]) *
-                  (rect[dims+1] - rect[1]) *
-                  (rect[dims+2] - rect[2]);
     *area_out = area;
     return enlarged - area;
 }
 static double rect_enlarged_area_4(double *rect, double *other, int dims, 
                                    double *area_out)
 {
+    double area = rect_area_4(rect, dims);
     double enlarged = 
         (MAX(other[dims+0], rect[dims+0]) - MIN(other[0], rect[0])) *
         (MAX(other[dims+1], rect[dims+1]) - MIN(other[1], rect[1])) *
         (MAX(other[dims+2], rect[dims+2]) - MIN(other[2], rect[2])) *
         (MAX(other[dims+3], rect[dims+3]) - MIN(other[3], rect[3]));    
-    double area = (rect[dims+0] - rect[0]) *
-                  (rect[dims+1] - rect[1]) *
-                  (rect[dims+2] - rect[2]) *
-                  (rect[dims+3] - rect[3]);
     *area_out = area;
     return enlarged - area;
 }
@@ -409,6 +506,37 @@ FN_SUBTREE(subtree_2, rect_enlarged_area_2);
 FN_SUBTREE(subtree_3, rect_enlarged_area_3);
 FN_SUBTREE(subtree_4, rect_enlarged_area_4);
 
+// contains return struct when b is fully contained inside of n
+static bool contains_d(double *rect, double *other, int dims) {
+    if (other[0] < rect[0] || other[dims+0] > rect[dims+0]) {
+        return false;
+    }
+    for (int i = 1; i < dims; i++) {
+        if (other[i] < rect[i] || other[dims+i] > rect[dims+i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool contains_2(double *rect, double *other, int dims) {
+    return !(other[0] < rect[0] || other[dims+0] > rect[dims+0] ||
+             other[1] < rect[1] || other[dims+1] > rect[dims+1]);
+}
+
+static bool contains_3(double *rect, double *other, int dims) {
+    return !(other[0] < rect[0] || other[dims+0] > rect[dims+0] ||
+             other[1] < rect[1] || other[dims+1] > rect[dims+1] ||
+             other[2] < rect[2] || other[dims+2] > rect[dims+2]);
+}
+
+static bool contains_4(double *rect, double *other, int dims) {
+    return !(other[0] < rect[0] || other[dims+0] > rect[dims+0] ||
+             other[1] < rect[1] || other[dims+1] > rect[dims+1] ||
+             other[2] < rect[2] || other[dims+2] > rect[dims+2] ||
+             other[3] < rect[3] || other[dims+3] > rect[dims+3]);
+}
+
 // node_insert inserts an item into the node. If the node is a branch, then
 // a child node (subtree) is chosen until a leaf node is found.
 static void node_insert(struct rtree *rtree, struct node *node, double *rect, 
@@ -421,13 +549,29 @@ static void node_insert(struct rtree *rtree, struct node *node, double *rect,
         return;
     }
     int dims = rtree->dims;
-    int index;
-    switch (rtree->dims) {
-    case 2:  index = subtree_2(node->rect, node->count, rect, dims); break;
-    case 3:  index = subtree_3(node->rect, node->count, rect, dims); break;
-    case 4:  index = subtree_4(node->rect, node->count, rect, dims); break;
-    default: index = subtree_d(node->rect, node->count, rect, dims);
+    int index = -1;
+
+    // double narea;
+    // for (int i = 0; i < node->count; i++) {
+    //     double *nrect = rect_at(rtree, node, i);
+    //     if (contains_d(nrect, rect, dims)) {
+    //         double area = rect_area_d(nrect, dims);
+    //         if (index == -1 || area < narea) {
+    //             index = i;
+    //             narea = area;
+    //         }
+    //     }
+    // }
+
+    if (index == -1) {
+        switch (rtree->dims) {
+        case 2:  index = subtree_2(node->rect, node->count, rect, dims); break;
+        case 3:  index = subtree_3(node->rect, node->count, rect, dims); break;
+        case 4:  index = subtree_4(node->rect, node->count, rect, dims); break;
+        default: index = subtree_d(node->rect, node->count, rect, dims);
+        }
     }
+
     struct node *child = *node_at(rtree, node, index);
     double *child_rect = rect_at(rtree, node, index);
     node_insert(rtree, child, rect, item);
@@ -480,6 +624,11 @@ static bool rtree_insert_x(struct rtree *rtree, double *rect, void *item) {
         rect_calc(rtree, rtree->root, rtree->rect);
         rtree->height++;
     }
+
+    if (ORDER_BRANCHES) {
+        node_sort(rtree, rtree->root);
+    }
+
     rtree->count++;
     return true;
 }
@@ -826,6 +975,7 @@ bool rtree_delete(struct rtree *rtree, double *rect, void *item) {
 #ifdef RTREE_TEST
 
 #pragma GCC diagnostic ignored "-Wextra"
+#pragma GCC diagnostic ignored "-Wcompound-token-split-by-macro"
 
 #ifdef CITIES
 #include "cities.xh"
