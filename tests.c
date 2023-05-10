@@ -1,6 +1,8 @@
 /* 
-cc -O3 -Wall -Werror -Wextra -pedantic -c -o rtree.o rtree.c
-cc -O3 tests.c rtree.o && ./a.out
+# TESTS and BENCHMARKS
+cc -O3 -Wall -Werror -Wextra -pedantic -c -o rtree.o rtree.c && \
+cc -O3 tests.c rtree.o && \
+./a.out
 */
 
 #include <stdlib.h>

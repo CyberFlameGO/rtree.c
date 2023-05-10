@@ -19,11 +19,6 @@
 
 ////////////////////////////////
 
-#define panic(_msg_) { \
-    fprintf(stderr, "panic: %s (%s:%d)\n", (_msg_), __FILE__, __LINE__); \
-    exit(1); \
-}
-
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
@@ -204,7 +199,6 @@ static void node_qsort(struct node *node, int s, int e, int axis, bool rev, bool
     node_swap(node, s+left, s+right);
     node_qsort(node, s, s+left, axis, rev, max);
     node_qsort(node, s+left+1, e, axis, rev, max);
-
 }
 
 // sort the node rectangles
@@ -668,6 +662,11 @@ static void _rtree_delete(struct rtree *tr, const NUMTYPE *min,
 //////////////////
 // checker
 //////////////////
+
+#define panic(_msg_) { \
+    fprintf(stderr, "panic: %s (%s:%d)\n", (_msg_), __FILE__, __LINE__); \
+    exit(1); \
+}
 
 static void node_check_order(struct node *node) {
     for (int i = 1; i < node->count; i++) {
