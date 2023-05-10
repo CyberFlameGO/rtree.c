@@ -50,7 +50,6 @@ struct node {
 
 struct rtree {
     size_t count;
-    int height;
     struct rect rect;
     struct node *root; 
     void *(*malloc)(size_t);
@@ -107,7 +106,6 @@ static bool rect_intersects(struct rect *rect, struct rect *other) {
     }
     return true;
 }
-
 
 static bool nums_equal(NUMTYPE a, NUMTYPE b) {
     return !(a < b || a > b);
@@ -491,7 +489,6 @@ static bool _rtree_insert(struct rtree *tr, const NUMTYPE *min,
         tr->root->children[0] = left;
         tr->root->children[1] = right;
         tr->root->count = 2;
-        tr->height++;
         node_sort(tr->root);
         return _rtree_insert(tr, min, max, data);
     }
