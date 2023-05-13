@@ -418,6 +418,9 @@ static int node_choose_subtree(const struct node *node,
                 }
             }
         }
+        if (index != -1) {
+            return index;
+        }
 #elif FAST_CHOOSER == 2
         for (int i = 0; i < node->count; i++) {
             if (rect_contains(&node->rects[i], ir)) {
