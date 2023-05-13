@@ -45,7 +45,7 @@ static int64_t seed = 0;
     if (argc < 2 || strstr(#name, argv[1])) { \
         if ((trand)) { \
             seed = getenv("SEED")?atoi(getenv("SEED")):crand(); \
-            printf("SEED=%lld\n", seed); \
+            printf("SEED=%" PRId64 "\n", seed); \
             srand(seed); \
         } else { \
             seedrand(); \
