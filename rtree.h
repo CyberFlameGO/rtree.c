@@ -98,49 +98,4 @@ bool rtree_delete_with_comparator(struct rtree *tr, const double *min,
     int (*compare)(const void *a, const void *b, void *udata),
     void *udata);
 
-
-
-
-
-
-
-
-
-// struct rtree_iter;
-
-// // size_t rtree_iter_memsize(const struct rtree *tr);
-// // void rtree_iter_search(struct rtree_iter *iter,
-// //     const double min[], const double max[]);
-
-// // #define rtree_iter_make(rtree) ({ \
-// //     void **iter = (alloca(rtree_iter_memsize((rtree)))); \
-// //     iter[0] = (rtree); \
-// //     (void*)iter; \
-// // })
-
-// // bool rtree_iter_next(struct rtree_iter *iter);
-
-// // // #define rtree_iter_search(rtree, min, max) { \
-// // //     struct rtree_iter *iter = alloca(rtree_iter_memsize(rtree)); \
-// // //     return iter; \
-// // // }
-
-// // // struct rtree_iter *
-// // // #define rtree_iter_search(tr, min, max)
-
-
-
-// // // alloca(rtree_iter_memsize(tr))
-
-
-// // // struct rtree_iter_vla {
-// // //     size_t memsize;
-// // //     char mem[];
-// // // };
-
-// // // struct rtree_iter;
-
-
-// // // void rtree_iter_free(struct rtree_iter *);
-
 #endif // RTREE_H
