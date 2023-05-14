@@ -62,6 +62,7 @@ static int64_t seed = 0;
 #define do_test(name) do_test0(name, 0)
 #define do_test_rand(name) do_test0(name, 1)
 
+// chaos test simple ensures that 1 out of 3 mallocs fail. 
 #define do_chaos_test(name) { \
     if (argc < 2 || strstr(#name, argv[1])) { \
         printf("%s\n", #name); \
@@ -101,8 +102,8 @@ static bool rand_alloc_fail = false;
 // 1 in 10 chance malloc or realloc will fail.
 static int rand_alloc_fail_odds = 3; 
 
-static void *xmalloc(size_t size) {
-    if (rand_alloc_fail && rand()%rand_alloc_fail_odds == 0) {
+static void *xmalloc_mul(size_t size, int mul) {
+    if (rand_alloc_fail && rand()%(rand_alloc_fail_odds*mul) == 0) {
         return NULL;
     }
     void *mem = malloc(sizeof(uint64_t)+size);
@@ -111,6 +112,19 @@ static void *xmalloc(size_t size) {
     atomic_fetch_add(&total_allocs, 1);
     atomic_fetch_add(&total_mem, (int)size);
     return (char*)mem+sizeof(uint64_t);
+}
+
+void *xmalloc(size_t size) {
+    return xmalloc_mul(size, 1);
+}
+void *xmalloc1(size_t size) {
+    return xmalloc_mul(size, 10);
+}
+void *xmalloc2(size_t size) {
+    return xmalloc_mul(size, 100);
+}
+void *xmalloc3(size_t size) {
+    return xmalloc_mul(size, 1000);
 }
 
 static void xfree(void *ptr) {
@@ -182,6 +196,7 @@ struct rect rand_rect() {
 
 struct find_one_context {
     void *target;
+    void *found_data;
     bool found;
     int(*compare)(const void *a, const void *b);
 };
@@ -195,16 +210,20 @@ bool find_one_iter(const double *min, const double *max, const void *data,
         data == ctx->target)
     {
         assert(!ctx->found);
+        ctx->found_data = (void*)data;
         ctx->found = true;
     }
     return true;
 }
 
 bool find_one(struct rtree *tr, const double min[], const double max[], 
-    void *data, int(*compare)(const void *a, const void *b))
+    void *data, int(*compare)(const void *a, const void *b), void **found_data)
 {
     struct find_one_context ctx = { .target = data, .compare = compare };
     rtree_search(tr, min, max, find_one_iter, &ctx);
+    if (found_data) {
+        *found_data = ctx.found ? ctx.found_data : NULL;
+    }
     return ctx.found;
 }
 
@@ -245,7 +264,7 @@ void *rtree_set(struct rtree *tr, const double *min, const double *max,
 {
     void *prev = NULL;
     size_t n = rtree_count(tr);
-    if (find_one(tr, min, max, data, NULL)) {
+    if (find_one(tr, min, max, data, NULL, NULL)) {
         prev = data;
         size_t n = rtree_count(tr);
         if (!rtree_delete(tr, min, max, data)) return oom_ptr;

@@ -195,7 +195,7 @@ void test_rtree_ops(void) {
         double *max = &coords[i*4+2];
         void *data = (void *)(uintptr_t)i;
         while (!rtree_insert(tr, min, max, data)){}
-        assert(find_one(tr, min, max, data, NULL));
+        assert(find_one(tr, min, max, data, NULL, NULL));
         assert(rtree_count(tr) == (size_t)(i+1));
         if (i%1000==0) assert(rtree_check(tr));
     }
@@ -224,7 +224,7 @@ void test_rtree_ops(void) {
         double *max = &coords[i*4+2];
         void *data = (void *)(uintptr_t)i;
         assert(rtree_count(tr) == (size_t)(N-i));
-        assert(find_one(tr, min, max, data, NULL));
+        assert(find_one(tr, min, max, data, NULL, NULL));
         if (i % 2) {
             int x = 9876;
             while (!rtree_delete_with_comparator(tr, min, max, data,
@@ -232,7 +232,7 @@ void test_rtree_ops(void) {
         } else {
             while (!rtree_delete(tr, min, max, data)){}
         }
-        assert(!find_one(tr, min, max, data, NULL));
+        assert(!find_one(tr, min, max, data, NULL, NULL));
         assert(rtree_count(tr) == (size_t)(N-i-1));
         if (i%1000==0) assert(rtree_check(tr));
 

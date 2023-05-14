@@ -8,12 +8,15 @@
 struct pair {
     double min[2];
     double max[2];
+    int key;
     int val;
 };
 
 
 int pair_compare0(const void *a, const void *b) {
-    return memcmp(((struct pair*)a), ((struct pair*)b), sizeof(struct pair));
+    size_t cmpsize = offsetof(struct pair, val);
+    cmpsize = sizeof(struct pair);
+    return memcmp(((struct pair*)a), ((struct pair*)b), cmpsize);
 }
 int pair_compare(const void *a, const void *b, void *udata) {
     (void)udata;
@@ -21,7 +24,7 @@ int pair_compare(const void *a, const void *b, void *udata) {
 }
 
 struct pair *pair_clone0(struct pair *pair) {
-    struct pair *pair2 = xmalloc(sizeof(struct pair));
+    struct pair *pair2 = xmalloc1(sizeof(struct pair));
     if (!pair2) return NULL;
     memcpy(pair2, pair, sizeof(struct pair));
     return pair2;
@@ -76,7 +79,7 @@ void test_clone_items_withcallbacks(bool withcallbacks) {
     }
     for (size_t i = 0; i < N; i++) {
         while(!(rtree_insert(tr, pairs[i]->min, pairs[i]->max, pairs[i])));
-        assert(find_one(tr, pairs[i]->min, pairs[i]->max, pairs[i], pair_compare0));
+        assert(find_one(tr, pairs[i]->min, pairs[i]->max, pairs[i], pair_compare0, NULL));
     }
     assert(rtree_count(tr) == N);
     assert(rtree_check(tr));
@@ -87,12 +90,12 @@ void test_clone_items_withcallbacks(bool withcallbacks) {
     for (size_t i = 0; i < N; i++) {
         while(!(pairs2[i] = pair_clone0(pairs[i])));
         pairs2[i]->val++;
-        assert(find_one(tr, pairs[i]->min, pairs[i]->max, pairs[i], pair_compare0));
-        assert(!find_one(tr, pairs2[i]->min, pairs2[i]->max, pairs2[i], pair_compare0));
+        assert(find_one(tr, pairs[i]->min, pairs[i]->max, pairs[i], pair_compare0, NULL));
+        assert(!find_one(tr, pairs2[i]->min, pairs2[i]->max, pairs2[i], pair_compare0, NULL));
         while(!(rtree_delete_with_comparator(tr, pairs[i]->min, pairs[i]->max, pairs[i], pair_compare, NULL)));
         while(!(rtree_insert(tr, pairs2[i]->min, pairs2[i]->max, pairs2[i])));
-        assert(!find_one(tr, pairs[i]->min, pairs[i]->max, pairs[i], pair_compare0));
-        assert(find_one(tr, pairs2[i]->min, pairs2[i]->max, pairs2[i], pair_compare0));
+        assert(!find_one(tr, pairs[i]->min, pairs[i]->max, pairs[i], pair_compare0, NULL));
+        assert(find_one(tr, pairs2[i]->min, pairs2[i]->max, pairs2[i], pair_compare0, NULL));
     }
 
     assert(rtree_count(tr) == N);
@@ -119,177 +122,162 @@ void test_clone_items_nocallbacks(void) {
     test_clone_items_withcallbacks(false);
 }
 
-// void test_clone_pairs_diverge_withcallbacks(bool withcallbacks) {
 
-//     size_t N = 10000;
-//     struct pair *pairs;
-//     while (!(pairs = xmalloc(sizeof(struct pair) * N)));
+void test_clone_delete_withcallbacks(bool withcallbacks) {
+    (void)withcallbacks;
+    size_t N = 10000;
+    struct pair **pairs;
+    while (!(pairs = xmalloc(sizeof(struct pair*) * N)));
+    for (size_t i = 0; i < N; i++) {
+        while (!(pairs[i] = xmalloc(sizeof(struct pair))));
+        fill_rand_rect(&pairs[i]->min[0]);
+        pairs[i]->val = i;
+    }
+    shuffle(pairs, N, sizeof(struct pair*));
+    struct rtree *tr; 
+    int udata = 9876;
+    while(!(tr = rtree_new_with_allocator(xmalloc, xfree)));
+    if (withcallbacks) {
+        rtree_set_udata(tr, &udata);
+        rtree_set_item_callbacks(tr, pair_clone, pair_free);
+    }
+    for (size_t i = 0; i < N; i++) {
+        while(!(rtree_insert(tr, pairs[i]->min, pairs[i]->max, pairs[i])));
+    }
+    assert(rtree_check(tr));
 
-//     for (size_t i = 0; i < N; i++) {
-//         pairs[i].key = i;
-//         pairs[i].val = 0;
-//     }
+    struct rtree *tr2;
+    while(!(tr2 = rtree_clone(tr)));
 
-//     shuffle(pairs, N, sizeof(struct pair));
+    assert(rtree_count(tr) == N);
+    assert(rtree_check(tr));
+    assert(rtree_count(tr2) == N);
+    assert(rtree_check(tr2));
 
-//     struct btree *btree; // used for oom_loop
-//     struct btree *btree1;
-//     while(!(btree1 = btree_new_for_test(sizeof(struct pair), 4, 
-//         compare_pairs, nothing)));
-
-//     if (withcallbacks) {
-//         btree_set_item_callbacks(btree1, pair_clone, pair_free);
-//     }
-//     for (size_t i = 0; i < N; i++) {
-//         const void *prev;
-//         btree = btree1;
-//         OOM_WAIT( { prev = btree_set(btree1, &pairs[i]); } );
-//         assert(!prev);
-//     }
-//     assert(btree_count(btree1) == N);
-//     assert(btree_sane(btree1));
-
-//     // clone the btree1 into btree2
-
-//     struct btree *btree2;
-//     while (!(btree2 = btree_clone(btree1)));
-
-
-//     // update btree1 to have val = 1
+    shuffle(pairs, N, sizeof(struct pair*));
+    for (size_t i = 0; i < N; i++) {
+        // printf("%zu: %zu\n", i, rtree_count(tr));
+        while(!(rtree_delete_with_comparator(tr, pairs[i]->min, pairs[i]->max, pairs[i], pair_compare, NULL)));
+        assert(rtree_check(tr));
+        // printf("%zu: %zu\n", i, rtree_count(tr));
+        assert(rtree_count(tr) == N-i-1);
+    }
+    assert(rtree_check(tr));
     
-//     for (size_t i = 0; i < N; i++) {
-//         struct pair pair1 = pairs[i];
-//         pair1.val = 1;
-//         const void *prev;
-//         btree = btree1;
-//         OOM_WAIT( { prev = btree_set(btree1, &pair1); } );
-//         assert(prev);
-//         assert(((struct pair*)prev)->val == 0);
-//     }
+    shuffle(pairs, N, sizeof(struct pair*));
+    for (size_t i = 0; i < N; i++) {
+        while(!(rtree_delete_with_comparator(tr2, pairs[i]->min, pairs[i]->max, pairs[i], pair_compare, NULL)));
+        // assert(rtree_check(tr2));
+        assert(rtree_count(tr2) == N-i-1);
+    }
 
-//     // update btree2 to have val = 2
+    rtree_free(tr2);
+    rtree_free(tr);
+    for (size_t i = 0; i < N; i++) {
+        xfree(pairs[i]);
+    }
+    xfree(pairs);
+}
 
-//     for (size_t i = 0; i < N; i++) {
-//         struct pair pair2 = pairs[i];
-//         pair2.val = 2;
-//         const void *prev;
-//         btree = btree2;
-//         OOM_WAIT( { prev = btree_set(btree2, &pair2); } );
-//         assert(prev);
-//         assert(((struct pair*)prev)->val == 0);
-//     }
+void test_clone_delete(void) {
+    test_clone_delete_withcallbacks(true);
+}
 
-//     for (size_t i = 0; i < N; i++) {
-//         const void *v;
-//         btree = btree1;
-//         OOM_WAIT( { v = btree_get(btree, &pairs[i]); } );
-//         assert(v);
-//         assert(((struct pair*)v)->val == 1);
-//     }
+void test_clone_delete_nocallbacks(void) {
+    test_clone_delete_withcallbacks(false);
+}
 
-//     for (size_t i = 0; i < N; i++) {
-//         const void *v;
-//         btree = btree2;
-//         OOM_WAIT( { v = btree_get(btree, &pairs[i]); } );
-//         assert(v);
-//         assert(((struct pair*)v)->val == 2);
-//     }
+void test_clone_pairs_diverge_withcallbacks(bool withcallbacks) {
+    size_t N = 10000;
+    struct pair **pairs;
+    while (!(pairs = xmalloc(sizeof(struct pair*) * N)));
 
-//     assert(btree_sane(btree1));
-//     assert(btree_sane(btree2));
-//     assert(btree_count(btree1) == N);
-//     assert(btree_count(btree2) == N);
+    for (size_t i = 0; i < N; i++) {
+        while (!(pairs[i] = xmalloc(sizeof(struct pair))));
+        fill_rand_rect(&pairs[i]->min[0]);
+        pairs[i]->key = i;
+        pairs[i]->val = 0;
+    }
 
+    shuffle(pairs, N, sizeof(struct pair*));
 
-//     for (size_t i = 0; i < N; i += 2) {
-//         const void *prev;
-//         btree = btree1;
-//         OOM_WAIT( { prev = btree_delete(btree, &pairs[i]); } );
-//         assert(prev);
-//         assert(((struct pair*)prev)->val == 1);
-//     }
+    struct rtree *tr1;
+    int udata = 9876;
+    while(!(tr1 = rtree_new_with_allocator(xmalloc, xfree)));
+    if (withcallbacks) {
+        rtree_set_udata(tr1, &udata);
+        rtree_set_item_callbacks(tr1, pair_clone, pair_free);
+    }
+    for (size_t i = 0; i < N; i++) {
+        while(!(rtree_insert(tr1, pairs[i]->min, pairs[i]->max, pairs[i])));
+    }
+    assert(rtree_count(tr1) == N);
+    assert(rtree_check(tr1));
 
-//     for (size_t i = 0; i < N; i += 2) {
-//         const void *prev;
-//         btree = btree2;
-//         OOM_WAIT( { prev = btree_delete(btree, &pairs[i]); } );
-//         assert(prev);
-//         assert(((struct pair*)prev)->val == 2);
-//     }
+    // clone the rt1 into rt2
+
+    struct rtree *tr2;
+    while (!(tr2 = rtree_clone(tr1)));
 
 
-//     assert(btree_sane(btree1));
-//     assert(btree_sane(btree2));
-//     assert(btree_count(btree1) == N/2);
-//     assert(btree_count(btree2) == N/2);
+    // update rt1 to have val = 1
+    
+    struct pair **pairs2 = NULL;
+    if (!withcallbacks) {
+        while (!(pairs2 = xmalloc(sizeof(struct pair*) * N)));
+    }
 
+    for (size_t i = 0; i < N; i++) {
+        struct pair *pair2;
+        while (!(pair2 = pair_clone0(pairs[i])));
+        pair2->val = 1;
+        struct pair *prev;
+        assert(find_one(tr1, pairs[i]->min, pairs[i]->max, 
+            pairs[i], pair_compare0, (void*)&prev));
+        assert(prev);
+        assert(((struct pair*)prev)->val == 0);
+        while (!(rtree_delete_with_comparator(tr1, pairs[i]->min, pairs[i]->max, 
+            pairs[i], pair_compare, NULL)));
+        assert(rtree_count(tr1) == N-1);
+        while (!(rtree_insert(tr1, pair2->min, pair2->max, pair2)));
+        assert(rtree_count(tr1) == N);
+        struct pair *new;
+        assert(find_one(tr1, pair2->min, pair2->max, 
+            pair2, pair_compare0, (void*)&new));
+        assert(new);
+        assert(((struct pair*)new)->val == 1);
+        if (pairs2) {
+            // need to hang on to the pairs2
+            pairs2[i] = pair2;
+        } else {
+            xfree(pair2);
+        }
+    }
 
-//     for (size_t i = 0; i < N; i+=2) {
-//         const void *v;
-//         btree = btree1;
-//         OOM_WAIT( { v = btree_get(btree, &pairs[i]); } );
-//         assert(!v);
-//     }
+    rtree_free(tr1);
+    rtree_free(tr2);
+    for (size_t i = 0; i < N; i++) {
+        xfree(pairs[i]);
+    }
+    xfree(pairs);
 
-//     for (size_t i = 0; i < N; i+=2) {
-//         const void *v;
-//         btree = btree2;
-//         OOM_WAIT( { v = btree_get(btree, &pairs[i]); } );
-//         assert(!v);
-//     }
+    if (pairs2) {
+        for (size_t i = 0; i < N; i++) {
+            xfree(pairs2[i]);
+        }
+        xfree(pairs2);
+    }
 
+    assert(!rtree_clone(NULL));
+}
 
-//     for (size_t i = 1; i < N; i+=2) {
-//         const void *v;
-//         btree = btree1;
-//         OOM_WAIT( { v = btree_get(btree, &pairs[i]); } );
-//         assert(v);
-//         assert(((struct pair*)v)->val == 1);
-//     }
+void test_clone_pairs_diverge(void) {
+    test_clone_pairs_diverge_withcallbacks(true);
+}
 
-//     for (size_t i = 1; i < N; i+=2) {
-//         const void *v;
-//         btree = btree2;
-//         OOM_WAIT( { v = btree_get(btree, &pairs[i]); } );
-//         assert(v);
-//         assert(((struct pair*)v)->val == 2);
-//     }
-
-
-//     for (size_t i = 1; i < N; i += 2) {
-//         const void *v;
-//         btree = btree1;
-//         OOM_WAIT( { v = btree_delete(btree, &pairs[i]); } );
-//         assert(v);
-//         assert(((struct pair*)v)->val == 1);
-//     }
-
-//     for (size_t i = 1; i < N; i += 2) {
-//         const void *v;
-//         btree = btree2;
-//         OOM_WAIT( { v = btree_delete(btree, &pairs[i]); } );
-//         assert(v);
-//         assert(((struct pair*)v)->val == 2);
-//     }
-
-//     assert(btree_sane(btree1));
-//     assert(btree_sane(btree2));
-//     assert(btree_count(btree1) == 0);
-//     assert(btree_count(btree2) == 0);
-
-//     btree_free(btree1);
-//     btree_free(btree2);
-//     xfree(pairs);
-//     assert(!btree_clone(NULL));
-// }
-
-// void test_clone_pairs_diverge(void) {
-//     test_clone_pairs_diverge_withcallbacks(true);
-// }
-
-// void test_clone_pairs_diverge_nocallbacks(void) {
-//     test_clone_pairs_diverge_withcallbacks(false);
-// }
+void test_clone_pairs_diverge_nocallbacks(void) {
+    test_clone_pairs_diverge_withcallbacks(false);
+}
 
 
 // cloneable object
@@ -450,6 +438,7 @@ void *thdwork(void *tdata) {
 }
 
 
+
 void test_clone_threads(void) {
     // This should probably be tested with both:
     //
@@ -536,150 +525,13 @@ void test_clone_threads(void) {
     rtree_free(rtree2);
 }
 
-
-void test_clone_delete_withcallbacks(bool withcallbacks) {
-    
-    size_t N = 10000;
-    struct pair *pairs;
-    while (!(pairs = xmalloc(sizeof(struct pair) * N)));
-
-    for (size_t i = 0; i < N; i++) {
-        fill_rand_rect(&pairs[i].min[0]);
-        pairs[i].val = i;
-    }
-    
-    shuffle(pairs, N, sizeof(struct pair));
-
-    struct rtree *tr; 
-    int udata = 9876;
-    while(!(tr = rtree_new_with_allocator(xmalloc, xfree)));
-    if (withcallbacks) {
-        rtree_set_udata(tr, &udata);
-        rtree_set_item_callbacks(tr, pair_clone, pair_free);
-    }
-    for (size_t i = 0; i < N; i++) {
-        while(!(rtree_insert(tr, pairs[i].min, pairs[i].max, &pairs[i])));
-    }
-    assert(rtree_check(tr));
-
-    struct rtree *tr2;
-    while(!(tr2 = rtree_clone(tr)));
-
-    assert(rtree_count(tr) == N);
-    assert(rtree_check(tr));
-    assert(rtree_count(tr2) == N);
-    assert(rtree_check(tr2));
-
-    shuffle(pairs, N, sizeof(struct pair));
-    for (size_t i = 0; i < N; i++) {
-        printf("%zu: %zu\n", i, rtree_count(tr));
-        while(!(rtree_delete(tr, pairs[i].min, pairs[i].max, &pairs[i])));
-        assert(rtree_check(tr));
-        printf("%zu: %zu\n", i, rtree_count(tr));
-        assert(rtree_count(tr) == N-i-1);
-    }
-
-    shuffle(pairs, N, sizeof(struct pair));
-    for (size_t i = 0; i < N; i++) {
-        while(!(rtree_delete(tr2, pairs[i].min, pairs[i].max, &pairs[i])));
-        assert(rtree_check(tr2));
-        assert(rtree_count(tr2) == N-i-1);
-    }
-
-    rtree_free(tr);
-    rtree_free(tr2);
-    xfree(pairs);
-}
-
-void test_clone_delete(void) {
-    test_clone_delete_withcallbacks(true);
-}
-
-void test_clone_delete_nocallbacks(void) {
-    test_clone_delete_withcallbacks(false);
-}
-
-// void test_clone_pop_withcallbacks(bool withcallbacks) {
-//     size_t N = 10000;
-//     struct pair *pairs;
-//     while (!(pairs = xmalloc(sizeof(struct pair) * N)));
-
-//     for (size_t i = 0; i < N; i++) {
-//         pairs[i].key = i;
-//         pairs[i].val = 0;
-//     }
-    
-//     shuffle(pairs, N, sizeof(struct pair));
-
-//     struct btree *btree1; 
-    
-//     while(!(btree1 = btree_new_for_test(sizeof(struct pair), 4, 
-//         compare_pairs, nothing)));
-//     if (withcallbacks) {
-//         btree_set_item_callbacks(btree1, pair_clone, pair_free);
-//     }
-//     for (size_t i = 0; i < N; i++) {
-//         const void *v;
-//         struct btree *btree = btree1;
-//         OOM_WAIT( { v = btree_load(btree, &pairs[i]); } );
-//         assert(!v);
-//     }
-//     assert(btree_sane(btree1));
-
-//     struct btree *btree2;
-//     while(!(btree2 = btree_clone(btree1)));
-
-//     assert(btree_count(btree1) == N);
-//     assert(btree_sane(btree1));
-//     assert(btree_count(btree2) == N);
-//     assert(btree_sane(btree2));
-
-//     shuffle(pairs, N, sizeof(struct pair));
-//     for (size_t i = 0; i < N; i++) {
-//         const void *v;
-//         struct btree *btree = btree1;
-//         OOM_WAIT( { v = btree_pop_min(btree); } );
-//         assert(v && ((struct pair*)v)->key == (int)i);
-//         assert(btree_sane(btree));
-//         assert(btree_count(btree) == N-i-1);
-//     }
-
-//     btree_free(btree1);
-//     while(!(btree1 = btree_clone(btree2)));
-//     shuffle(pairs, N, sizeof(struct pair));
-//     for (size_t i = 0; i < N; i++) {
-//         const void *v;
-//         struct btree *btree = btree2; // this is needed for OOM_WAIT;
-//         OOM_WAIT( { v = btree_pop_max(btree); } );
-//         assert(v && ((struct pair*)v)->key == (int)(N-i-1));
-//         assert(btree_sane(btree));
-//         assert(btree_count(btree) == N-i-1);
-//     }
-
-//     btree_free(btree1);
-//     btree_free(btree2);
-//     xfree(pairs);
-// }
-
-// void test_clone_pop(void) {
-//     test_clone_pop_withcallbacks(true);
-// }
-
-// void test_clone_pop_nocallbacks(void) {
-//     test_clone_pop_withcallbacks(false);
-// }
-
-
-
 int main(int argc, char **argv) {
     do_chaos_test(test_clone_items);
     do_chaos_test(test_clone_items_nocallbacks);
-    // do_chaos_test(test_clone_delete);
-    // do_chaos_test(test_clone_delete_nocallbacks);
-
-
-    // do_chaos_test(test_clone_pairs_diverge);
-    // do_chaos_test(test_clone_pairs_diverge_nocallbacks);
+    do_chaos_test(test_clone_delete);
+    do_chaos_test(test_clone_delete_nocallbacks);
+    do_chaos_test(test_clone_pairs_diverge);
+    do_chaos_test(test_clone_pairs_diverge_nocallbacks);
     // do_chaos_test(test_clone_pop);
     // do_chaos_test(test_clone_pop_nocallbacks);
 
